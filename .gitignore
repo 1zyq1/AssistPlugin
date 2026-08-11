@@ -16,6 +16,7 @@ Thumbs.db
 
 # Plugin
 *.jar
+!gradle/wrapper/gradle-wrapper.jar
 
 # Tools
 .codegraph/
