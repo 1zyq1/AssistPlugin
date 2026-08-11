@@ -1,0 +1,56 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/v}
+          echo "version=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Update version in build.gradle
+        run: |
+          sed -i "s/version = '.*'/version = '${{ steps.version.outputs.version }}'/" build.gradle
+          sed -i "s/version: '.*'/version: '${{ steps.version.outputs.version }}'/" src/main/resources/plugin.yml
+
+      - name: Build with Gradle
+        run: ./gradlew clean jar
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: AssistPlugin v${{ steps.version.outputs.version }}
+          body: |
+            ## AssistPlugin v${{ steps.version.outputs.version }}
+            
+            ### 功能列表
+            1. 万能切石机 - 原木切割成任意木制品变种
+            2. 火把驱赶幻翼 - 16格范围火把驱赶幻翼
+            3. 宠物生命提升 - 狗和猫生命值提升至20点
+            4. 发光浆果效果 - 食用后获得10秒发光效果
+            5. 猫在箱子上可打开 - 猫坐箱子不再阻挡
+            6. 箱子上有方块可打开 - 箱子上方有方块仍可打开
+            7. 雪球灭火 - 雪球熄灭蜡烛、篝火和火焰
+          files: build/libs/AssistPlugin.jar
+          draft: false
+          prerelease: false
