@@ -1,6 +1,24 @@
 name: AssistPlugin
-version: 1.0.0
+version: 1.1.0
 main: com.assist.AssistPlugin
 api-version: '1.21'
-description: '辅助插件 - 万能切石机/火把驱幻翼/宠物生命提升/发光浆果/猫开箱子/方块开箱子/雪球灭火'
+description: '辅助插件 - 万能切石机/火把驱幻翼/宠物生命提升/发光浆果/猫开箱子/方块开箱子/雪球灭火/夜视开关'
 author: 1zyq1
+
+commands:
+  nv:
+    description: 切换夜视效果
+    usage: /nv
+    permission: assistplugin.nightvision
+  assist:
+    description: AssistPlugin 管理指令
+    usage: /assist [reload]
+    permission: assistplugin.admin
+
+permissions:
+  assistplugin.nightvision:
+    description: 允许使用夜视指令
+    default: true
+  assistplugin.admin:
+    description: 允许管理插件
+    default: op

@@ -4,6 +4,9 @@ import org.bukkit.*;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandExecutor;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.*;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -24,9 +27,21 @@ import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 
+import java.io.IOException;
+import java.nio.file.*;
 import java.util.*;
 
 public class AssistPlugin extends JavaPlugin implements Listener {
+
+    // 配置项
+    private boolean enableStonecutter;
+    private boolean enablePhantomRepel;
+    private boolean enablePetHealth;
+    private boolean enableGlowBerries;
+    private boolean enableCatChest;
+    private boolean enableBlockChest;
+    private boolean enableSnowballExtinguish;
+    private boolean enableNightVision;
 
     // 中文名称映射
     private static final Map<Material, String> CN = new HashMap<>();
@@ -160,10 +175,128 @@ public class AssistPlugin extends JavaPlugin implements Listener {
 
     @Override
     public void onEnable() {
+        saveDefaultConfig();
+        loadConfig();
         getServer().getPluginManager().registerEvents(this, this);
-        startPetHealthTask();
-        startPhantomRepelTask();
+        getCommand("nv").setExecutor(new NightVisionCommand());
+        getCommand("assist").setExecutor(new AssistCommand());
+        if (enableNightVision) startNightVisionTask();
+        if (enablePetHealth) startPetHealthTask();
+        if (enablePhantomRepel) startPhantomRepelTask();
+        startConfigWatcher();
         getLogger().info("AssistPlugin loaded - 8 features active!");
+    }
+
+    @Override
+    public void onDisable() {
+        if (configWatcher != null) {
+            try {
+                configWatcher.close();
+            } catch (IOException e) {
+                // ignore
+            }
+        }
+    }
+
+    private void loadConfig() {
+        enableStonecutter = getConfig().getBoolean("stonecutter", true);
+        enablePhantomRepel = getConfig().getBoolean("phantom-repel", true);
+        enablePetHealth = getConfig().getBoolean("pet-health", true);
+        enableGlowBerries = getConfig().getBoolean("glow-berries", true);
+        enableCatChest = getConfig().getBoolean("cat-chest", true);
+        enableBlockChest = getConfig().getBoolean("block-chest", true);
+        enableSnowballExtinguish = getConfig().getBoolean("snowball-extinguish", true);
+        enableNightVision = getConfig().getBoolean("night-vision", true);
+    }
+
+    // ==================== 配置文件热更新 ====================
+    private WatchService configWatcher;
+
+    private void startConfigWatcher() {
+        try {
+            configWatcher = FileSystems.getDefault().newWatchService();
+            Path configDir = getDataFolder().toPath();
+            if (!Files.exists(configDir)) return;
+            configDir.register(configWatcher, StandardWatchEventKinds.ENTRY_MODIFY);
+
+            new BukkitRunnable() {
+                @Override
+                public void run() {
+                    WatchKey key = configWatcher.poll();
+                    if (key != null) {
+                        for (WatchEvent<?> event : key.pollEvents()) {
+                            Path changed = (Path) event.context();
+                            if (changed != null && changed.toString().equals("config.yml")) {
+                                reloadConfig();
+                                loadConfig();
+                                getLogger().info("config.yml 已自动重载!");
+                            }
+                        }
+                        key.reset();
+                    }
+                }
+            }.runTaskTimer(AssistPlugin.this, 0L, 20L);
+        } catch (IOException e) {
+            getLogger().warning("配置文件监控启动失败: " + e.getMessage());
+        }
+    }
+
+    // ==================== 功能9: 夜视开关指令 /nv ====================
+    private final Set<UUID> nightVisionPlayers = new HashSet<>();
+
+    private class NightVisionCommand implements CommandExecutor {
+        @Override
+        public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+            if (!(sender instanceof Player player)) {
+                sender.sendMessage(ChatColor.RED + "此指令只能由玩家使用");
+                return true;
+            }
+
+            UUID uuid = player.getUniqueId();
+            if (nightVisionPlayers.contains(uuid)) {
+                nightVisionPlayers.remove(uuid);
+                player.removePotionEffect(PotionEffectType.NIGHT_VISION);
+                player.sendMessage(ChatColor.YELLOW + "夜视效果已关闭");
+            } else {
+                nightVisionPlayers.add(uuid);
+                player.addPotionEffect(new PotionEffect(PotionEffectType.NIGHT_VISION, 20, 0, true, true, true));
+                player.sendMessage(ChatColor.GREEN + "夜视效果已开启");
+            }
+            return true;
+        }
+    }
+
+    private class AssistCommand implements CommandExecutor {
+        @Override
+        public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+            if (args.length == 1 && args[0].equalsIgnoreCase("reload")) {
+                reloadConfig();
+                loadConfig();
+                sender.sendMessage(ChatColor.GREEN + "AssistPlugin 配置已重载!");
+                return true;
+            }
+            sender.sendMessage(ChatColor.GOLD + "=== AssistPlugin ===");
+            sender.sendMessage(ChatColor.YELLOW + "/assist reload" + ChatColor.GRAY + " - 重载配置文件");
+            return true;
+        }
+    }
+
+    private void startNightVisionTask() {
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                for (UUID uuid : nightVisionPlayers) {
+                    Player player = getServer().getPlayer(uuid);
+                    if (player != null && player.isOnline()) {
+                        if (!player.hasPotionEffect(PotionEffectType.NIGHT_VISION)) {
+                            player.addPotionEffect(new PotionEffect(PotionEffectType.NIGHT_VISION, 20, 0, true, true, true));
+                        }
+                    } else {
+                        nightVisionPlayers.remove(uuid);
+                    }
+                }
+            }
+        }.runTaskTimer(AssistPlugin.this, 0L, 15L);
     }
 
     // ==================== 功能4: 宠物生命提升 (狗和猫 -> 20HP) ====================
@@ -241,6 +374,7 @@ public class AssistPlugin extends JavaPlugin implements Listener {
     // ==================== 功能1: 万能切石机 ====================
     @EventHandler
     public void onStonecutterUse(PlayerInteractEvent event) {
+        if (!enableStonecutter) return;
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
         Block block = event.getClickedBlock();
         if (block == null || block.getType() != Material.STONECUTTER) return;
@@ -348,6 +482,7 @@ public class AssistPlugin extends JavaPlugin implements Listener {
     // ==================== 功能5: 发光浆果 -> 发光效果 ====================
     @EventHandler
     public void onGlowBerriesEat(PlayerItemConsumeEvent event) {
+        if (!enableGlowBerries) return;
         Player player = event.getPlayer();
         ItemStack item = event.getItem();
         if (item.getType() != Material.GLOW_BERRIES) return;
@@ -365,6 +500,7 @@ public class AssistPlugin extends JavaPlugin implements Listener {
     // ==================== 功能6: 猫坐在箱子上也能打开 ====================
     @EventHandler(priority = EventPriority.HIGH)
     public void onCatBlockChest(PlayerInteractEvent event) {
+        if (!enableCatChest) return;
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
         if (event.isCancelled()) return;
         Block block = event.getClickedBlock();
@@ -383,6 +519,7 @@ public class AssistPlugin extends JavaPlugin implements Listener {
     // ==================== 功能7: 箱子上有方块也能打开 ====================
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onBlockAboveChest(PlayerInteractEvent event) {
+        if (!enableBlockChest) return;
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
         if (event.isCancelled()) return;
         Block block = event.getClickedBlock();
@@ -401,6 +538,7 @@ public class AssistPlugin extends JavaPlugin implements Listener {
     // ==================== 功能8: 雪球灭火 (蜡烛/篝火/火焰) ====================
     @EventHandler
     public void onSnowballHit(ProjectileHitEvent event) {
+        if (!enableSnowballExtinguish) return;
         if (!(event.getEntity() instanceof Snowball)) return;
         Block block = event.getHitBlock();
         if (block == null) return;

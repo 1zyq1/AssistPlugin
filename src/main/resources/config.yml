@@ -1,0 +1,26 @@
+# AssistPlugin 配置文件
+# true = 开启, false = 关闭
+
+# 万能切石机 - 手持原木右键切石机可切割成各种木制品
+stonecutter: true
+
+# 火把驱赶幻翼 - 16格范围内的火把自动驱赶幻翼
+phantom-repel: true
+
+# 宠物生命提升 - 已驯服的狗和猫生命值提升至20点
+pet-health: true
+
+# 发光浆果效果 - 食用发光浆果后获得发光效果
+glow-berries: true
+
+# 猫在箱子上可打开 - 猫坐在箱子上不再阻挡打开
+cat-chest: true
+
+# 箱子上有方块可打开 - 箱子上方有实体方块时仍可打开
+block-chest: true
+
+# 雪球灭火 - 雪球可熄灭蜡烛、篝火和火焰
+snowball-extinguish: true
+
+# 夜视开关 - /nv 指令开关夜视效果
+night-vision: true
