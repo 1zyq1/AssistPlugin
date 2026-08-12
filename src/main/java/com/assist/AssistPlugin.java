@@ -16,6 +16,7 @@ import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
@@ -27,8 +28,7 @@ import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 
-import java.io.IOException;
-import java.nio.file.*;
+import java.io.File;
 import java.util.*;
 
 public class AssistPlugin extends JavaPlugin implements Listener {
@@ -43,12 +43,23 @@ public class AssistPlugin extends JavaPlugin implements Listener {
     private boolean enableSnowballExtinguish;
     private boolean enableNightVision;
 
+    // 缓存 Material.values()，避免重复创建数组
+    private static final Material[] MATERIALS = Material.values();
+
     // 中文名称映射
     private static final Map<Material, String> CN = new HashMap<>();
     // 切石机配方: 输入 -> [(输出ordinal, 输出数量)]
     private static final Map<Material, List<int[]>> CUTTING_RECIPES = new LinkedHashMap<>();
-    // 玩家正在切割的材料
+    // 玩家正在切割的材料（玩家离线时清理）
     private final Map<UUID, Material> playerInput = new HashMap<>();
+
+    // 定时任务引用，用于动态启停
+    private BukkitRunnable nightVisionTask;
+    private BukkitRunnable petHealthTask;
+    private BukkitRunnable phantomRepelTask;
+
+    // 配置文件热更新
+    private long lastConfigModified = 0;
 
     static {
         // ===== 中文名 =====
@@ -180,22 +191,14 @@ public class AssistPlugin extends JavaPlugin implements Listener {
         getServer().getPluginManager().registerEvents(this, this);
         getCommand("nv").setExecutor(new NightVisionCommand());
         getCommand("assist").setExecutor(new AssistCommand());
-        if (enableNightVision) startNightVisionTask();
-        if (enablePetHealth) startPetHealthTask();
-        if (enablePhantomRepel) startPhantomRepelTask();
+        startTasks();
         startConfigWatcher();
         getLogger().info("AssistPlugin loaded - 8 features active!");
     }
 
     @Override
     public void onDisable() {
-        if (configWatcher != null) {
-            try {
-                configWatcher.close();
-            } catch (IOException e) {
-                // ignore
-            }
-        }
+        cancelTasks();
     }
 
     private void loadConfig() {
@@ -209,36 +212,39 @@ public class AssistPlugin extends JavaPlugin implements Listener {
         enableNightVision = getConfig().getBoolean("night-vision", true);
     }
 
-    // ==================== 配置文件热更新 ====================
-    private WatchService configWatcher;
+    // ==================== 定时任务管理（支持动态启停） ====================
+    private void startTasks() {
+        if (enableNightVision) startNightVisionTask();
+        if (enablePetHealth) startPetHealthTask();
+        if (enablePhantomRepel) startPhantomRepelTask();
+    }
 
+    private void cancelTasks() {
+        if (nightVisionTask != null) { nightVisionTask.cancel(); nightVisionTask = null; }
+        if (petHealthTask != null) { petHealthTask.cancel(); petHealthTask = null; }
+        if (phantomRepelTask != null) { phantomRepelTask.cancel(); phantomRepelTask = null; }
+    }
+
+    // ==================== 配置文件热更新（文件修改时间轮询） ====================
     private void startConfigWatcher() {
-        try {
-            configWatcher = FileSystems.getDefault().newWatchService();
-            Path configDir = getDataFolder().toPath();
-            if (!Files.exists(configDir)) return;
-            configDir.register(configWatcher, StandardWatchEventKinds.ENTRY_MODIFY);
+        File configFile = new File(getDataFolder(), "config.yml");
+        lastConfigModified = configFile.lastModified();
 
-            new BukkitRunnable() {
-                @Override
-                public void run() {
-                    WatchKey key = configWatcher.poll();
-                    if (key != null) {
-                        for (WatchEvent<?> event : key.pollEvents()) {
-                            Path changed = (Path) event.context();
-                            if (changed != null && changed.toString().equals("config.yml")) {
-                                reloadConfig();
-                                loadConfig();
-                                getLogger().info("config.yml 已自动重载!");
-                            }
-                        }
-                        key.reset();
-                    }
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                File file = new File(getDataFolder(), "config.yml");
+                long currentModified = file.lastModified();
+                if (currentModified != lastConfigModified) {
+                    lastConfigModified = currentModified;
+                    cancelTasks();
+                    reloadConfig();
+                    loadConfig();
+                    startTasks();
+                    getLogger().info("config.yml 已自动重载!");
                 }
-            }.runTaskTimer(AssistPlugin.this, 0L, 20L);
-        } catch (IOException e) {
-            getLogger().warning("配置文件监控启动失败: " + e.getMessage());
-        }
+            }
+        }.runTaskTimer(AssistPlugin.this, 20L, 20L);
     }
 
     // ==================== 功能9: 夜视开关指令 /nv ====================
@@ -270,8 +276,12 @@ public class AssistPlugin extends JavaPlugin implements Listener {
         @Override
         public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
             if (args.length == 1 && args[0].equalsIgnoreCase("reload")) {
+                cancelTasks();
                 reloadConfig();
                 loadConfig();
+                startTasks();
+                File configFile = new File(getDataFolder(), "config.yml");
+                lastConfigModified = configFile.lastModified();
                 sender.sendMessage(ChatColor.GREEN + "AssistPlugin 配置已重载!");
                 return true;
             }
@@ -282,26 +292,29 @@ public class AssistPlugin extends JavaPlugin implements Listener {
     }
 
     private void startNightVisionTask() {
-        new BukkitRunnable() {
+        nightVisionTask = new BukkitRunnable() {
             @Override
             public void run() {
-                for (UUID uuid : nightVisionPlayers) {
+                Iterator<UUID> it = nightVisionPlayers.iterator();
+                while (it.hasNext()) {
+                    UUID uuid = it.next();
                     Player player = getServer().getPlayer(uuid);
                     if (player != null && player.isOnline()) {
                         if (!player.hasPotionEffect(PotionEffectType.NIGHT_VISION)) {
                             player.addPotionEffect(new PotionEffect(PotionEffectType.NIGHT_VISION, 20, 0, true, true, true));
                         }
                     } else {
-                        nightVisionPlayers.remove(uuid);
+                        it.remove();
                     }
                 }
             }
-        }.runTaskTimer(AssistPlugin.this, 0L, 15L);
+        };
+        nightVisionTask.runTaskTimer(AssistPlugin.this, 0L, 30L);
     }
 
     // ==================== 功能4: 宠物生命提升 (狗和猫 -> 20HP) ====================
     private void startPetHealthTask() {
-        new BukkitRunnable() {
+        petHealthTask = new BukkitRunnable() {
             @Override
             public void run() {
                 for (World world : getServer().getWorlds()) {
@@ -323,20 +336,20 @@ public class AssistPlugin extends JavaPlugin implements Listener {
                     }
                 }
             }
-        }.runTaskTimer(this, 40L, 60L);
+        };
+        petHealthTask.runTaskTimer(this, 40L, 60L);
     }
 
-    // ==================== 功能3: 火把驱赶幻翼 ====================
+    // ==================== 功能3: 火把驱赶幻翼（半径8格，频率2秒） ====================
     private void startPhantomRepelTask() {
-        new BukkitRunnable() {
+        phantomRepelTask = new BukkitRunnable() {
             @Override
             public void run() {
                 for (World world : getServer().getWorlds()) {
                     if (world.getEnvironment() != World.Environment.NORMAL) continue;
                     for (Phantom phantom : world.getEntitiesByClass(Phantom.class)) {
                         Location loc = phantom.getLocation();
-                        // 查找最近的火把
-                        Block nearestTorch = findNearestTorch(loc, 16);
+                        Block nearestTorch = findNearestTorch(loc, 8);
                         if (nearestTorch != null) {
                             org.bukkit.util.Vector dir = loc.toVector()
                                 .subtract(nearestTorch.getLocation().add(0.5, 0.5, 0.5).toVector())
@@ -347,7 +360,8 @@ public class AssistPlugin extends JavaPlugin implements Listener {
                     }
                 }
             }
-        }.runTaskTimer(this, 40L, 20L);
+        };
+        phantomRepelTask.runTaskTimer(this, 40L, 40L);
     }
 
     private Block findNearestTorch(Location loc, int radius) {
@@ -358,7 +372,10 @@ public class AssistPlugin extends JavaPlugin implements Listener {
             for (int y = -radius; y <= radius; y++) {
                 for (int z = -radius; z <= radius; z++) {
                     Block b = center.getRelative(x, y, z);
-                    if (b.getType().name().contains("TORCH")) {
+                    Material type = b.getType();
+                    if (type == Material.TORCH || type == Material.WALL_TORCH
+                            || type == Material.SOUL_TORCH || type == Material.SOUL_WALL_TORCH
+                            || type == Material.REDSTONE_TORCH || type == Material.REDSTONE_WALL_TORCH) {
                         double dist = loc.distanceSquared(b.getLocation().add(0.5, 0.5, 0.5));
                         if (dist < nearestDist) {
                             nearestDist = dist;
@@ -399,7 +416,7 @@ public class AssistPlugin extends JavaPlugin implements Listener {
         int slot = 10;
         for (int[] recipe : recipes) {
             if (slot >= 17) break;
-            Material outputType = Material.values()[recipe[0]];
+            Material outputType = MATERIALS[recipe[0]];
             int amount = recipe[1];
 
             ItemStack item = new ItemStack(outputType, amount);
@@ -440,7 +457,7 @@ public class AssistPlugin extends JavaPlugin implements Listener {
         // 匹配配方
         int[] matched = null;
         for (int[] r : recipes) {
-            if (Material.values()[r[0]] == clicked.getType()) { matched = r; break; }
+            if (MATERIALS[r[0]] == clicked.getType()) { matched = r; break; }
         }
         if (matched == null) { player.closeInventory(); return; }
 
@@ -459,7 +476,7 @@ public class AssistPlugin extends JavaPlugin implements Listener {
         if (mainHand.getAmount() <= 0) inv.setItemInMainHand(null);
 
         // 给予输出
-        Material outputType = Material.values()[matched[0]];
+        Material outputType = MATERIALS[matched[0]];
         int outputAmount = matched[1];
         ItemStack resultItem = new ItemStack(outputType, outputAmount);
         HashMap<Integer, ItemStack> overflow = inv.addItem(resultItem);
@@ -483,16 +500,18 @@ public class AssistPlugin extends JavaPlugin implements Listener {
     @EventHandler
     public void onGlowBerriesEat(PlayerItemConsumeEvent event) {
         if (!enableGlowBerries) return;
+        if (event.isCancelled()) return;
         Player player = event.getPlayer();
         ItemStack item = event.getItem();
         if (item.getType() != Material.GLOW_BERRIES) return;
 
-        // 食用完成后给予发光效果
         new BukkitRunnable() {
             @Override
             public void run() {
-                player.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, 200, 0, true, true, true));
-                player.sendMessage(ChatColor.YELLOW + "\u4f60\u98df\u7528\u4e86\u53d1\u5149\u6d46\u679c\uff0c\u83b7\u5f97\u4e86\u53d1\u5149\u6548\u679c!");
+                if (player.isOnline()) {
+                    player.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, 200, 0, true, true, true));
+                    player.sendMessage(ChatColor.YELLOW + "\u4f60\u98df\u7528\u4e86\u53d1\u5149\u6d46\u679c\uff0c\u83b7\u5f97\u4e86\u53d1\u5149\u6548\u679c!");
+                }
             }
         }.runTaskLater(AssistPlugin.this, 1L);
     }
@@ -506,7 +525,6 @@ public class AssistPlugin extends JavaPlugin implements Listener {
         Block block = event.getClickedBlock();
         if (block == null || !isChest(block.getType())) return;
 
-        // 检查上方是否有坐着的猫
         for (Entity entity : block.getRelative(BlockFace.UP).getWorld()
                 .getNearbyEntities(block.getRelative(BlockFace.UP).getLocation().add(0.5, 0.5, 0.5), 0.5, 0.5, 0.5)) {
             if (entity instanceof Cat cat && cat.isSitting()) {
@@ -516,19 +534,18 @@ public class AssistPlugin extends JavaPlugin implements Listener {
         }
     }
 
-    // ==================== 功能7: 箱子上有方块也能打开 ====================
+    // ==================== 功能7: 箱子上有方块也能打开（修复：不检查 isCancelled） ====================
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onBlockAboveChest(PlayerInteractEvent event) {
         if (!enableBlockChest) return;
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
-        if (event.isCancelled()) return;
         Block block = event.getClickedBlock();
         if (block == null || !isChest(block.getType())) return;
 
         Block above = block.getRelative(BlockFace.UP);
         Material aboveType = above.getType();
-        if (aboveType.isSolid() && aboveType != Material.AIR && aboveType != Material.CAVE_AIR) {
-            event.setCancelled(false);
+        if (aboveType.isSolid()) {
+            event.setCancelled(true);
             if (block.getState() instanceof InventoryHolder holder) {
                 event.getPlayer().openInventory(holder.getInventory());
             }
@@ -576,6 +593,14 @@ public class AssistPlugin extends JavaPlugin implements Listener {
             world.spawnParticle(Particle.LARGE_SMOKE, loc.clone().add(0.5, 0.5, 0.5), 10, 0.3, 0.3, 0.3, 0.02);
             world.playSound(loc, Sound.ENTITY_GENERIC_EXTINGUISH_FIRE, 1.0f, 1.0f);
         }
+    }
+
+    // ==================== 玩家离线清理（防内存泄漏） ====================
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        UUID uuid = event.getPlayer().getUniqueId();
+        playerInput.remove(uuid);
+        nightVisionPlayers.remove(uuid);
     }
 
     // ==================== 工具方法 ====================
