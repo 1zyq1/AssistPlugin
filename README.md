@@ -13,6 +13,7 @@
 | 猫在箱子上可打开 | 猫坐在箱子上不再阻挡打开箱子 |
 | 箱子上有方块可打开 | 箱子上方有实体方块时仍可正常打开 |
 | 雪球灭火 | 雪球可熄灭蜡烛、篝火和灵魂篝火、火焰 |
+| 夜视开关 | `/nv` 指令开关夜视效果，显示 0:00 |
 
 ## 切石机配方
 
@@ -27,6 +28,31 @@
 | 栅栏门 | 1 |
 | 压力板 | 1 |
 | 按钮 | 1 |
+
+## 指令
+
+| 指令 | 说明 | 权限 |
+|---|---|---|
+| `/nv` | 开关夜视效果 | 所有玩家 |
+| `/assist` | 查看帮助 | 所有玩家 |
+| `/assist reload` | 重载配置文件 | OP |
+
+## 配置文件
+
+插件首次运行自动生成 `config.yml`，可开关每个功能：
+
+```yaml
+stonecutter: true        # 万能切石机
+phantom-repel: true      # 火把驱幻翼
+pet-health: true         # 宠物生命提升
+glow-berries: true       # 发光浆果
+cat-chest: true          # 猫开箱子
+block-chest: true        # 方块开箱子
+snowball-extinguish: true # 雪球灭火
+night-vision: true       # 夜视开关
+```
+
+支持热更新：修改 `config.yml` 后自动生效，或执行 `/assist reload` 手动重载。
 
 ## 环境要求
 
@@ -54,12 +80,12 @@ cd AssistPlugin
 推送 tag 即可触发 GitHub Actions 自动构建并发布到 Releases:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 ## 信息
 
 - 作者: 1zyq1
-- 版本: 1.0.0
+- 版本: 1.1.0
 - 协议: MIT
