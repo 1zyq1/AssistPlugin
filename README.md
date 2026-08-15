@@ -14,6 +14,7 @@
 | 箱子上有方块可打开 | 箱子上方有实体方块时仍可正常打开 |
 | 雪球灭火 | 雪球可熄灭蜡烛、篝火和灵魂篝火、火焰 |
 | 夜视开关 | `/nv` 指令开关夜视效果，显示 0:00 |
+| Shift+F 快捷键 | 蹲下按 F 执行自定义命令，可配置 |
 
 ## 切石机配方
 
@@ -50,6 +51,9 @@ cat-chest: true          # 猫开箱子
 block-chest: true        # 方块开箱子
 snowball-extinguish: true # 雪球灭火
 night-vision: true       # 夜视开关
+shift-f:
+  enabled: true              # Shift+F 快捷键
+  command: "say 你按下了Shift+F!"  # 执行的命令
 ```
 
 支持热更新：修改 `config.yml` 后自动生效，或执行 `/assist reload` 手动重载。
@@ -87,5 +91,5 @@ git push origin v1.1.0
 ## 信息
 
 - 作者: 1zyq1
-- 版本: 1.2.0
+- 版本: 1.3.0
 - 协议: MIT
