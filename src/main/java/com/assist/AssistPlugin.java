@@ -17,6 +17,7 @@ import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
@@ -42,6 +43,8 @@ public class AssistPlugin extends JavaPlugin implements Listener {
     private boolean enableBlockChest;
     private boolean enableSnowballExtinguish;
     private boolean enableNightVision;
+    private boolean enableShiftF;
+    private String shiftFCommand;
 
     // 缓存 Material.values()，避免重复创建数组
     private static final Material[] MATERIALS = Material.values();
@@ -193,7 +196,7 @@ public class AssistPlugin extends JavaPlugin implements Listener {
         getCommand("assist").setExecutor(new AssistCommand());
         startTasks();
         startConfigWatcher();
-        getLogger().info("AssistPlugin loaded - 8 features active!");
+        getLogger().info("AssistPlugin loaded - 9 features active!");
     }
 
     @Override
@@ -210,6 +213,8 @@ public class AssistPlugin extends JavaPlugin implements Listener {
         enableBlockChest = getConfig().getBoolean("block-chest", true);
         enableSnowballExtinguish = getConfig().getBoolean("snowball-extinguish", true);
         enableNightVision = getConfig().getBoolean("night-vision", true);
+        enableShiftF = getConfig().getBoolean("shift-f.enabled", false);
+        shiftFCommand = getConfig().getString("shift-f.command", "say Shift+F pressed!");
     }
 
     // ==================== 定时任务管理（支持动态启停） ====================
@@ -593,6 +598,28 @@ public class AssistPlugin extends JavaPlugin implements Listener {
             world.spawnParticle(Particle.LARGE_SMOKE, loc.clone().add(0.5, 0.5, 0.5), 10, 0.3, 0.3, 0.3, 0.02);
             world.playSound(loc, Sound.ENTITY_GENERIC_EXTINGUISH_FIRE, 1.0f, 1.0f);
         }
+    }
+
+    // ==================== 功能9: Shift+F 快捷键执行自定义命令 ====================
+    @EventHandler
+    public void onShiftF(PlayerSwapHandItemsEvent event) {
+        if (!enableShiftF) return;
+        Player player = event.getPlayer();
+        if (!player.isSneaking()) return;
+
+        event.setCancelled(true);
+
+        // 以玩家身份执行命令（/开头为原生命令，不加/为插件命令）
+        String cmd = shiftFCommand;
+        if (cmd.startsWith("/")) {
+            cmd = cmd.substring(1);
+        }
+        final String command = cmd;
+        getServer().getScheduler().runTask(this, () -> {
+            if (player.isOnline()) {
+                getServer().dispatchCommand(player, command);
+            }
+        });
     }
 
     // ==================== 玩家离线清理（防内存泄漏） ====================
