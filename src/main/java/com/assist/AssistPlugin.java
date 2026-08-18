@@ -42,9 +42,9 @@ public class AssistPlugin extends JavaPlugin implements Listener {
     private boolean enableCatChest;
     private boolean enableBlockChest;
     private boolean enableSnowballExtinguish;
-    private boolean enableNightVision;
     private boolean enableShiftF;
     private String shiftFCommand;
+    private boolean shiftFAsOp;
 
     // 缓存 Material.values()，避免重复创建数组
     private static final Material[] MATERIALS = Material.values();
@@ -57,7 +57,6 @@ public class AssistPlugin extends JavaPlugin implements Listener {
     private final Map<UUID, Material> playerInput = new HashMap<>();
 
     // 定时任务引用，用于动态启停
-    private BukkitRunnable nightVisionTask;
     private BukkitRunnable petHealthTask;
     private BukkitRunnable phantomRepelTask;
 
@@ -192,11 +191,10 @@ public class AssistPlugin extends JavaPlugin implements Listener {
         saveDefaultConfig();
         loadConfig();
         getServer().getPluginManager().registerEvents(this, this);
-        getCommand("nv").setExecutor(new NightVisionCommand());
         getCommand("assist").setExecutor(new AssistCommand());
         startTasks();
         startConfigWatcher();
-        getLogger().info("AssistPlugin loaded - 9 features active!");
+        getLogger().info("AssistPlugin loaded - 8 features active!");
     }
 
     @Override
@@ -212,20 +210,18 @@ public class AssistPlugin extends JavaPlugin implements Listener {
         enableCatChest = getConfig().getBoolean("cat-chest", true);
         enableBlockChest = getConfig().getBoolean("block-chest", true);
         enableSnowballExtinguish = getConfig().getBoolean("snowball-extinguish", true);
-        enableNightVision = getConfig().getBoolean("night-vision", true);
         enableShiftF = getConfig().getBoolean("shift-f.enabled", false);
         shiftFCommand = getConfig().getString("shift-f.command", "say Shift+F pressed!");
+        shiftFAsOp = getConfig().getBoolean("shift-f.as-op", false);
     }
 
     // ==================== 定时任务管理（支持动态启停） ====================
     private void startTasks() {
-        if (enableNightVision) startNightVisionTask();
         if (enablePetHealth) startPetHealthTask();
         if (enablePhantomRepel) startPhantomRepelTask();
     }
 
     private void cancelTasks() {
-        if (nightVisionTask != null) { nightVisionTask.cancel(); nightVisionTask = null; }
         if (petHealthTask != null) { petHealthTask.cancel(); petHealthTask = null; }
         if (phantomRepelTask != null) { phantomRepelTask.cancel(); phantomRepelTask = null; }
     }
@@ -252,31 +248,6 @@ public class AssistPlugin extends JavaPlugin implements Listener {
         }.runTaskTimer(AssistPlugin.this, 20L, 20L);
     }
 
-    // ==================== 功能9: 夜视开关指令 /nv ====================
-    private final Set<UUID> nightVisionPlayers = new HashSet<>();
-
-    private class NightVisionCommand implements CommandExecutor {
-        @Override
-        public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-            if (!(sender instanceof Player player)) {
-                sender.sendMessage(ChatColor.RED + "此指令只能由玩家使用");
-                return true;
-            }
-
-            UUID uuid = player.getUniqueId();
-            if (nightVisionPlayers.contains(uuid)) {
-                nightVisionPlayers.remove(uuid);
-                player.removePotionEffect(PotionEffectType.NIGHT_VISION);
-                player.sendMessage(ChatColor.YELLOW + "夜视效果已关闭");
-            } else {
-                nightVisionPlayers.add(uuid);
-                player.addPotionEffect(new PotionEffect(PotionEffectType.NIGHT_VISION, 20, 0, true, true, true));
-                player.sendMessage(ChatColor.GREEN + "夜视效果已开启");
-            }
-            return true;
-        }
-    }
-
     private class AssistCommand implements CommandExecutor {
         @Override
         public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
@@ -294,27 +265,6 @@ public class AssistPlugin extends JavaPlugin implements Listener {
             sender.sendMessage(ChatColor.YELLOW + "/assist reload" + ChatColor.GRAY + " - 重载配置文件");
             return true;
         }
-    }
-
-    private void startNightVisionTask() {
-        nightVisionTask = new BukkitRunnable() {
-            @Override
-            public void run() {
-                Iterator<UUID> it = nightVisionPlayers.iterator();
-                while (it.hasNext()) {
-                    UUID uuid = it.next();
-                    Player player = getServer().getPlayer(uuid);
-                    if (player != null && player.isOnline()) {
-                        if (!player.hasPotionEffect(PotionEffectType.NIGHT_VISION)) {
-                            player.addPotionEffect(new PotionEffect(PotionEffectType.NIGHT_VISION, 20, 0, true, true, true));
-                        }
-                    } else {
-                        it.remove();
-                    }
-                }
-            }
-        };
-        nightVisionTask.runTaskTimer(AssistPlugin.this, 0L, 30L);
     }
 
     // ==================== 功能4: 宠物生命提升 (狗和猫 -> 20HP) ====================
@@ -609,14 +559,19 @@ public class AssistPlugin extends JavaPlugin implements Listener {
 
         event.setCancelled(true);
 
-        // 以玩家身份执行命令（/开头为原生命令，不加/为插件命令）
-        String cmd = shiftFCommand;
-        if (cmd.startsWith("/")) {
-            cmd = cmd.substring(1);
-        }
-        final String command = cmd;
+        // 支持 %player% 变量
+        final String command = shiftFCommand.replace("%player%", player.getName());
         getServer().getScheduler().runTask(this, () -> {
-            if (player.isOnline()) {
+            if (!player.isOnline()) return;
+            if (shiftFAsOp) {
+                boolean wasOp = player.isOp();
+                player.setOp(true);
+                try {
+                    getServer().dispatchCommand(player, command);
+                } finally {
+                    player.setOp(wasOp);
+                }
+            } else {
                 getServer().dispatchCommand(player, command);
             }
         });
@@ -627,7 +582,6 @@ public class AssistPlugin extends JavaPlugin implements Listener {
     public void onPlayerQuit(PlayerQuitEvent event) {
         UUID uuid = event.getPlayer().getUniqueId();
         playerInput.remove(uuid);
-        nightVisionPlayers.remove(uuid);
     }
 
     // ==================== 工具方法 ====================

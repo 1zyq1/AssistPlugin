@@ -22,10 +22,8 @@ block-chest: true
 # 雪球灭火 - 雪球可熄灭蜡烛、篝火和火焰
 snowball-extinguish: true
 
-# 夜视开关 - /nv 指令开关夜视效果
-night-vision: true
-
 # Shift+F 快捷键 - 蹲下按F执行自定义命令
 shift-f:
   enabled: true
   command: "say 你按下了Shift+F!"
+  as-op: false  # 是否以OP权限执行命令
