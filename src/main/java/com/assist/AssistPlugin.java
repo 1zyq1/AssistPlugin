@@ -13,17 +13,15 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.entity.ProjectileHitEvent;
-import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.block.data.BlockData;
-import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.PlayerInventory;
-import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.inventory.Recipe;
+import org.bukkit.inventory.StonecuttingRecipe;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -46,15 +44,8 @@ public class AssistPlugin extends JavaPlugin implements Listener {
     private String shiftFCommand;
     private boolean shiftFAsOp;
 
-    // 缓存 Material.values()，避免重复创建数组
-    private static final Material[] MATERIALS = Material.values();
-
-    // 中文名称映射
-    private static final Map<Material, String> CN = new HashMap<>();
-    // 切石机配方: 输入 -> [(输出ordinal, 输出数量)]
-    private static final Map<Material, List<int[]>> CUTTING_RECIPES = new LinkedHashMap<>();
-    // 玩家正在切割的材料（玩家离线时清理）
-    private final Map<UUID, Material> playerInput = new HashMap<>();
+    // 切石机配方key列表，用于移除
+    private final List<NamespacedKey> stonecutterRecipeKeys = new ArrayList<>();
 
     // 定时任务引用，用于动态启停
     private BukkitRunnable petHealthTask;
@@ -63,128 +54,10 @@ public class AssistPlugin extends JavaPlugin implements Listener {
     // 配置文件热更新
     private long lastConfigModified = 0;
 
-    static {
-        // ===== 中文名 =====
-        String[][] names = {
-            {"OAK_LOG", "\u6a61\u6728\u539f\u6728"}, {"OAK_WOOD", "\u6a61\u6728"}, {"OAK_PLANKS", "\u6a61\u6728\u6728\u677f"},
-            {"OAK_SLAB", "\u6a61\u6728\u53f0\u9636"}, {"OAK_STAIRS", "\u6a61\u6728\u697c\u68af"}, {"OAK_FENCE", "\u6a61\u6728\u6805\u680f"},
-            {"OAK_FENCE_GATE", "\u6a61\u6728\u6805\u680f\u95e8"}, {"OAK_PRESSURE_PLATE", "\u6a61\u6728\u538b\u529b\u677f"},
-            {"OAK_BUTTON", "\u6a61\u6728\u6309\u94ae"},
-
-            {"SPRUCE_LOG", "\u4e91\u6749\u539f\u6728"}, {"SPRUCE_WOOD", "\u4e91\u6749\u6728"}, {"SPRUCE_PLANKS", "\u4e91\u6749\u6728\u677f"},
-            {"SPRUCE_SLAB", "\u4e91\u6749\u53f0\u9636"}, {"SPRUCE_STAIRS", "\u4e91\u6749\u697c\u68af"}, {"SPRUCE_FENCE", "\u4e91\u6749\u6805\u680f"},
-            {"SPRUCE_FENCE_GATE", "\u4e91\u6749\u6805\u680f\u95e8"}, {"SPRUCE_PRESSURE_PLATE", "\u4e91\u6749\u538b\u529b\u677f"},
-            {"SPRUCE_BUTTON", "\u4e91\u6749\u6309\u94ae"},
-
-            {"BIRCH_LOG", "\u767d\u68d3\u539f\u6728"}, {"BIRCH_WOOD", "\u767d\u68d3\u6728"}, {"BIRCH_PLANKS", "\u767d\u68d3\u6728\u677f"},
-            {"BIRCH_SLAB", "\u767d\u68d3\u53f0\u9636"}, {"BIRCH_STAIRS", "\u767d\u68d3\u697c\u68af"}, {"BIRCH_FENCE", "\u767d\u68d3\u6805\u680f"},
-            {"BIRCH_FENCE_GATE", "\u767d\u68d3\u6805\u680f\u95e8"}, {"BIRCH_PRESSURE_PLATE", "\u767d\u68d3\u538b\u529b\u677f"},
-            {"BIRCH_BUTTON", "\u767d\u68d3\u6309\u94ae"},
-
-            {"JUNGLE_LOG", "\u4e1b\u6797\u539f\u6728"}, {"JUNGLE_WOOD", "\u4e1b\u6797\u6728"}, {"JUNGLE_PLANKS", "\u4e1b\u6797\u6728\u677f"},
-            {"JUNGLE_SLAB", "\u4e1b\u6797\u53f0\u9636"}, {"JUNGLE_STAIRS", "\u4e1b\u6797\u697c\u68af"}, {"JUNGLE_FENCE", "\u4e1b\u6797\u6805\u680f"},
-            {"JUNGLE_FENCE_GATE", "\u4e1b\u6797\u6805\u680f\u95e8"}, {"JUNGLE_PRESSURE_PLATE", "\u4e1b\u6797\u538b\u529b\u677f"},
-            {"JUNGLE_BUTTON", "\u4e1b\u6797\u6309\u94ae"},
-
-            {"ACACIA_LOG", "\u91d1\u5408\u6b22\u539f\u6728"}, {"ACACIA_WOOD", "\u91d1\u5408\u6b22\u6728"}, {"ACACIA_PLANKS", "\u91d1\u5408\u6b22\u6728\u677f"},
-            {"ACACIA_SLAB", "\u91d1\u5408\u6b22\u53f0\u9636"}, {"ACACIA_STAIRS", "\u91d1\u5408\u6b22\u697c\u68af"}, {"ACACIA_FENCE", "\u91d1\u5408\u6b22\u6805\u680f"},
-            {"ACACIA_FENCE_GATE", "\u91d1\u5408\u6b22\u6805\u680f\u95e8"}, {"ACACIA_PRESSURE_PLATE", "\u91d1\u5408\u6b22\u538b\u529b\u677f"},
-            {"ACACIA_BUTTON", "\u91d1\u5408\u6b22\u6309\u94ae"},
-
-            {"DARK_OAK_LOG", "\u6df1\u8272\u6a61\u6728\u539f\u6728"}, {"DARK_OAK_WOOD", "\u6df1\u8272\u6a61\u6728"}, {"DARK_OAK_PLANKS", "\u6df1\u8272\u6a61\u6728\u6728\u677f"},
-            {"DARK_OAK_SLAB", "\u6df1\u8272\u6a61\u6728\u53f0\u9636"}, {"DARK_OAK_STAIRS", "\u6df1\u8272\u6a61\u6728\u697c\u68af"}, {"DARK_OAK_FENCE", "\u6df1\u8272\u6a61\u6728\u6805\u680f"},
-            {"DARK_OAK_FENCE_GATE", "\u6df1\u8272\u6a61\u6728\u6805\u680f\u95e8"}, {"DARK_OAK_PRESSURE_PLATE", "\u6df1\u8272\u6a61\u6728\u538b\u529b\u677f"},
-            {"DARK_OAK_BUTTON", "\u6df1\u8272\u6a61\u6728\u6309\u94ae"},
-
-            {"MANGROVE_LOG", "\u7ea2\u6811\u539f\u6728"}, {"MANGROVE_WOOD", "\u7ea2\u6811\u6728"}, {"MANGROVE_PLANKS", "\u7ea2\u6811\u6728\u677f"},
-            {"MANGROVE_SLAB", "\u7ea2\u6811\u53f0\u9636"}, {"MANGROVE_STAIRS", "\u7ea2\u6811\u697c\u68af"}, {"MANGROVE_FENCE", "\u7ea2\u6811\u6805\u680f"},
-            {"MANGROVE_FENCE_GATE", "\u7ea2\u6811\u6805\u680f\u95e8"}, {"MANGROVE_PRESSURE_PLATE", "\u7ea2\u6811\u538b\u529b\u677f"},
-            {"MANGROVE_BUTTON", "\u7ea2\u6811\u6309\u94ae"},
-
-            {"CHERRY_LOG", "\u6a31\u82b1\u539f\u6728"}, {"CHERRY_WOOD", "\u6a31\u82b1\u6728"}, {"CHERRY_PLANKS", "\u6a31\u82b1\u6728\u677f"},
-            {"CHERRY_SLAB", "\u6a31\u82b1\u53f0\u9636"}, {"CHERRY_STAIRS", "\u6a31\u82b1\u697c\u68af"}, {"CHERRY_FENCE", "\u6a31\u82b1\u6805\u680f"},
-            {"CHERRY_FENCE_GATE", "\u6a31\u82b1\u6805\u680f\u95e8"}, {"CHERRY_PRESSURE_PLATE", "\u6a31\u82b1\u538b\u529b\u677f"},
-            {"CHERRY_BUTTON", "\u6a31\u82b1\u6309\u94ae"},
-
-            {"BAMBOO_BLOCK", "\u7af9\u5757"}, {"BAMBOO_PLANKS", "\u7af9\u6728\u677f"},
-            {"BAMBOO_SLAB", "\u7af9\u53f0\u9636"}, {"BAMBOO_STAIRS", "\u7af9\u697c\u68af"}, {"BAMBOO_FENCE", "\u7af9\u6805\u680f"},
-            {"BAMBOO_FENCE_GATE", "\u7af9\u6805\u680f\u95e8"}, {"BAMBOO_PRESSURE_PLATE", "\u7af9\u538b\u529b\u677f"},
-            {"BAMBOO_BUTTON", "\u7af9\u6309\u94ae"},
-
-            {"WARPED_STEM", "\u8be1\u5f02\u83cc\u6811\u5e72"}, {"WARPED_HYPHAE", "\u8be1\u5f02\u83cc\u6811\u5e72\u53cc\u5c42"},
-            {"WARPED_PLANKS", "\u8be1\u5f02\u6728\u677f"}, {"WARPED_SLAB", "\u8be1\u5f02\u53f0\u9636"}, {"WARPED_STAIRS", "\u8be1\u5f02\u697c\u68af"},
-            {"WARPED_FENCE", "\u8be1\u5f02\u6805\u680f"}, {"WARPED_FENCE_GATE", "\u8be1\u5f02\u6805\u680f\u95e8"},
-            {"WARPED_PRESSURE_PLATE", "\u8be1\u5f02\u538b\u529b\u677f"}, {"WARPED_BUTTON", "\u8be1\u5f02\u6309\u94ae"},
-
-            {"CRIMSON_STEM", "\u7eaa\u7ea2\u83cc\u6811\u5e72"}, {"CRIMSON_HYPHAE", "\u7eaa\u7ea2\u83cc\u6811\u5e72\u53cc\u5c42"},
-            {"CRIMSON_PLANKS", "\u7eaa\u7ea2\u6728\u677f"}, {"CRIMSON_SLAB", "\u7eaa\u7ea2\u53f0\u9636"}, {"CRIMSON_STAIRS", "\u7eaa\u7ea2\u697c\u68af"},
-            {"CRIMSON_FENCE", "\u7eaa\u7ea2\u6805\u680f"}, {"CRIMSON_FENCE_GATE", "\u7eaa\u7ea2\u6805\u680f\u95e8"},
-            {"CRIMSON_PRESSURE_PLATE", "\u7eaa\u7ea2\u538b\u529b\u677f"}, {"CRIMSON_BUTTON", "\u7eaa\u7ea2\u6309\u94ae"},
-
-            {"GLOW_BERRIES", "\u53d1\u5149\u6d46\u679c"},
-        };
-        for (String[] pair : names) {
-            Material m = Material.matchMaterial(pair[0]);
-            if (m != null) CN.put(m, pair[1]);
-        }
-
-        // ===== 切石机配方: 1原木 -> 多种产物 =====
-        String[] woodTypes = {
-            "OAK", "SPRUCE", "BIRCH", "JUNGLE", "ACACIA", "DARK_OAK", "MANGROVE", "CHERRY"
-        };
-        String[] woodSources = {"_LOG", "_WOOD"};
-
-        for (String wood : woodTypes) {
-            String plank = wood + "_PLANKS";
-            String slab = wood + "_SLAB";
-            String stairs = wood + "_STAIRS";
-            String fence = wood + "_FENCE";
-            String gate = wood + "_FENCE_GATE";
-            String plate = wood + "_PRESSURE_PLATE";
-            String button = wood + "_BUTTON";
-
-            for (String src : woodSources) {
-                Material input = Material.matchMaterial(wood + src);
-                if (input == null) continue;
-                addRecipe(input, plank, 4);
-                addRecipe(input, slab, 6);
-                addRecipe(input, stairs, 2);
-                addRecipe(input, fence, 3);
-                addRecipe(input, gate, 1);
-                addRecipe(input, plate, 1);
-                addRecipe(input, button, 1);
-            }
-        }
-        // 竹
-        addRecipe(Material.BAMBOO_BLOCK, "BAMBOO_PLANKS", 4);
-        addRecipe(Material.BAMBOO_BLOCK, "BAMBOO_SLAB", 6);
-        addRecipe(Material.BAMBOO_BLOCK, "BAMBOO_STAIRS", 2);
-        addRecipe(Material.BAMBOO_BLOCK, "BAMBOO_FENCE", 3);
-        addRecipe(Material.BAMBOO_BLOCK, "BAMBOO_FENCE_GATE", 1);
-        addRecipe(Material.BAMBOO_BLOCK, "BAMBOO_PRESSURE_PLATE", 1);
-        addRecipe(Material.BAMBOO_BLOCK, "BAMBOO_BUTTON", 1);
-        // 下界
-        for (String stem : new String[]{"WARPED", "CRIMSON"}) {
-            for (String src : new String[]{"_STEM", "_HYPHAE"}) {
-                Material input = Material.matchMaterial(stem + src);
-                if (input == null) continue;
-                addRecipe(input, stem + "_PLANKS", 4);
-                addRecipe(input, stem + "_SLAB", 6);
-                addRecipe(input, stem + "_STAIRS", 2);
-                addRecipe(input, stem + "_FENCE", 3);
-                addRecipe(input, stem + "_FENCE_GATE", 1);
-                addRecipe(input, stem + "_PRESSURE_PLATE", 1);
-                addRecipe(input, stem + "_BUTTON", 1);
-            }
-        }
-    }
-
-    private static void addRecipe(Material input, String outputName, int amount) {
-        Material output = Material.matchMaterial(outputName);
-        if (input == null || output == null) return;
-        CUTTING_RECIPES.computeIfAbsent(input, k -> new ArrayList<>())
-            .add(new int[]{output.ordinal(), amount});
-    }
+    // 木材类型
+    private static final String[] WOOD_TYPES = {
+        "OAK", "SPRUCE", "BIRCH", "JUNGLE", "ACACIA", "DARK_OAK", "MANGROVE", "CHERRY"
+    };
 
     @Override
     public void onEnable() {
@@ -194,12 +67,14 @@ public class AssistPlugin extends JavaPlugin implements Listener {
         getCommand("assist").setExecutor(new AssistCommand());
         startTasks();
         startConfigWatcher();
+        registerStonecutterRecipes();
         getLogger().info("AssistPlugin loaded - 8 features active!");
     }
 
     @Override
     public void onDisable() {
         cancelTasks();
+        removeStonecutterRecipes();
     }
 
     private void loadConfig() {
@@ -213,6 +88,83 @@ public class AssistPlugin extends JavaPlugin implements Listener {
         enableShiftF = getConfig().getBoolean("shift-f.enabled", false);
         shiftFCommand = getConfig().getString("shift-f.command", "say Shift+F pressed!");
         shiftFAsOp = getConfig().getBoolean("shift-f.as-op", false);
+    }
+
+    // ==================== 切石机原生配方注册 ====================
+    private void registerStonecutterRecipes() {
+        if (!enableStonecutter) return;
+
+        for (String wood : WOOD_TYPES) {
+            String[] sources = {(wood + "_LOG"), (wood + "_WOOD")};
+            String plank = wood + "_PLANKS";
+            String slab = wood + "_SLAB";
+            String stairs = wood + "_STAIRS";
+            String fence = wood + "_FENCE";
+            String gate = wood + "_FENCE_GATE";
+            String plate = wood + "_PRESSURE_PLATE";
+            String button = wood + "_BUTTON";
+
+            for (String src : sources) {
+                Material input = Material.matchMaterial(src);
+                if (input == null) continue;
+
+                addStonecuttingRecipe(input, plank, 4);
+                addStonecuttingRecipe(input, slab, 6);
+                addStonecuttingRecipe(input, stairs, 2);
+                addStonecuttingRecipe(input, fence, 3);
+                addStonecuttingRecipe(input, gate, 1);
+                addStonecuttingRecipe(input, plate, 2);
+                addStonecuttingRecipe(input, button, 4);
+            }
+        }
+
+        // 竹
+        Material bamboo = Material.BAMBOO_BLOCK;
+        addStonecuttingRecipe(bamboo, "BAMBOO_PLANKS", 4);
+        addStonecuttingRecipe(bamboo, "BAMBOO_SLAB", 6);
+        addStonecuttingRecipe(bamboo, "BAMBOO_STAIRS", 2);
+        addStonecuttingRecipe(bamboo, "BAMBOO_FENCE", 3);
+        addStonecuttingRecipe(bamboo, "BAMBOO_FENCE_GATE", 1);
+        addStonecuttingRecipe(bamboo, "BAMBOO_PRESSURE_PLATE", 2);
+        addStonecuttingRecipe(bamboo, "BAMBOO_BUTTON", 4);
+
+        // 下界
+        for (String stem : new String[]{"WARPED", "CRIMSON"}) {
+            String[] sources = {(stem + "_STEM"), (stem + "_HYPHAE")};
+            for (String src : sources) {
+                Material input = Material.matchMaterial(src);
+                if (input == null) continue;
+
+                addStonecuttingRecipe(input, stem + "_PLANKS", 4);
+                addStonecuttingRecipe(input, stem + "_SLAB", 6);
+                addStonecuttingRecipe(input, stem + "_STAIRS", 2);
+                addStonecuttingRecipe(input, stem + "_FENCE", 3);
+                addStonecuttingRecipe(input, stem + "_FENCE_GATE", 1);
+                addStonecuttingRecipe(input, stem + "_PRESSURE_PLATE", 2);
+                addStonecuttingRecipe(input, stem + "_BUTTON", 4);
+            }
+        }
+
+        getLogger().info("已注册 " + stonecutterRecipeKeys.size() + " 个切石机配方");
+    }
+
+    private void addStonecuttingRecipe(Material input, String outputName, int amount) {
+        Material output = Material.matchMaterial(outputName);
+        if (input == null || output == null) return;
+
+        NamespacedKey key = new NamespacedKey(this, "stonecut_" + input.name().toLowerCase() + "_to_" + output.name().toLowerCase());
+        ItemStack result = new ItemStack(output, amount);
+
+        StonecuttingRecipe recipe = new StonecuttingRecipe(key, result, input);
+        getServer().addRecipe(recipe);
+        stonecutterRecipeKeys.add(key);
+    }
+
+    private void removeStonecutterRecipes() {
+        for (NamespacedKey key : stonecutterRecipeKeys) {
+            getServer().removeRecipe(key);
+        }
+        stonecutterRecipeKeys.clear();
     }
 
     // ==================== 定时任务管理（支持动态启停） ====================
@@ -239,9 +191,11 @@ public class AssistPlugin extends JavaPlugin implements Listener {
                 if (currentModified != lastConfigModified) {
                     lastConfigModified = currentModified;
                     cancelTasks();
+                    removeStonecutterRecipes();
                     reloadConfig();
                     loadConfig();
                     startTasks();
+                    registerStonecutterRecipes();
                     getLogger().info("config.yml 已自动重载!");
                 }
             }
@@ -253,9 +207,11 @@ public class AssistPlugin extends JavaPlugin implements Listener {
         public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
             if (args.length == 1 && args[0].equalsIgnoreCase("reload")) {
                 cancelTasks();
+                removeStonecutterRecipes();
                 reloadConfig();
                 loadConfig();
                 startTasks();
+                registerStonecutterRecipes();
                 File configFile = new File(getDataFolder(), "config.yml");
                 lastConfigModified = configFile.lastModified();
                 sender.sendMessage(ChatColor.GREEN + "AssistPlugin 配置已重载!");
@@ -343,114 +299,6 @@ public class AssistPlugin extends JavaPlugin implements Listener {
         return nearest;
     }
 
-    // ==================== 功能1: 万能切石机 ====================
-    @EventHandler
-    public void onStonecutterUse(PlayerInteractEvent event) {
-        if (!enableStonecutter) return;
-        if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
-        Block block = event.getClickedBlock();
-        if (block == null || block.getType() != Material.STONECUTTER) return;
-
-        Player player = event.getPlayer();
-        ItemStack handItem = player.getInventory().getItemInMainHand();
-        Material inputType = handItem.getType();
-        if (!CUTTING_RECIPES.containsKey(inputType)) return;
-
-        event.setCancelled(true);
-        openCuttingGUI(player, inputType);
-    }
-
-    private void openCuttingGUI(Player player, Material inputType) {
-        playerInput.put(player.getUniqueId(), inputType);
-        String inputCN = CN.getOrDefault(inputType, inputType.name());
-        Inventory gui = Bukkit.createInventory(null, 27, ChatColor.GOLD + "\u5207\u77f3\u673a - " + inputCN);
-
-        List<int[]> recipes = CUTTING_RECIPES.get(inputType);
-        if (recipes == null) return;
-
-        int slot = 10;
-        for (int[] recipe : recipes) {
-            if (slot >= 17) break;
-            Material outputType = MATERIALS[recipe[0]];
-            int amount = recipe[1];
-
-            ItemStack item = new ItemStack(outputType, amount);
-            ItemMeta meta = item.getItemMeta();
-            if (meta != null) {
-                String outCN = CN.getOrDefault(outputType, outputType.name());
-                meta.setDisplayName(ChatColor.GREEN + outCN + " x" + amount);
-                meta.setLore(Arrays.asList(
-                    ChatColor.YELLOW + "\u70b9\u51fb\u5207\u5272",
-                    ChatColor.GRAY + "\u6d88\u8017 1 \u4e2a " + inputCN
-                ));
-                item.setItemMeta(meta);
-            }
-            gui.setItem(slot, item);
-            slot++;
-            if (slot == 17) slot = 19;
-        }
-        player.openInventory(gui);
-    }
-
-    @EventHandler
-    public void onGuiClick(InventoryClickEvent event) {
-        if (!(event.getWhoClicked() instanceof Player player)) return;
-        String title = event.getView().getTitle();
-        if (title == null || !title.contains("\u5207\u77f3\u673a")) return;
-        event.setCancelled(true);
-
-        ItemStack clicked = event.getCurrentItem();
-        if (clicked == null || clicked.getType() == Material.AIR) return;
-
-        UUID uuid = player.getUniqueId();
-        Material inputType = playerInput.get(uuid);
-        if (inputType == null) { player.closeInventory(); return; }
-
-        List<int[]> recipes = CUTTING_RECIPES.get(inputType);
-        if (recipes == null) { player.closeInventory(); return; }
-
-        // 匹配配方
-        int[] matched = null;
-        for (int[] r : recipes) {
-            if (MATERIALS[r[0]] == clicked.getType()) { matched = r; break; }
-        }
-        if (matched == null) { player.closeInventory(); return; }
-
-        PlayerInventory inv = player.getInventory();
-        ItemStack mainHand = inv.getItemInMainHand();
-
-        // 验证手中材料
-        if (mainHand.getType() != inputType || mainHand.getAmount() < 1) {
-            player.sendMessage(ChatColor.RED + "\u624b\u91cc\u6ca1\u6709\u8db3\u591f\u7684\u6750\u6599!");
-            player.closeInventory();
-            return;
-        }
-
-        // 消耗1个输入
-        mainHand.setAmount(mainHand.getAmount() - 1);
-        if (mainHand.getAmount() <= 0) inv.setItemInMainHand(null);
-
-        // 给予输出
-        Material outputType = MATERIALS[matched[0]];
-        int outputAmount = matched[1];
-        ItemStack resultItem = new ItemStack(outputType, outputAmount);
-        HashMap<Integer, ItemStack> overflow = inv.addItem(resultItem);
-        if (!overflow.isEmpty()) {
-            for (ItemStack over : overflow.values()) {
-                player.getWorld().dropItemNaturally(player.getLocation(), over);
-            }
-        }
-
-        String outCN = CN.getOrDefault(outputType, outputType.name());
-        player.sendMessage(ChatColor.GREEN + "\u5207\u5272\u6210\u529f: " + outCN + " x" + outputAmount);
-
-        // 刷新GUI
-        player.closeInventory();
-        if (inv.getItemInMainHand() != null && inv.getItemInMainHand().getType() == inputType) {
-            openCuttingGUI(player, inputType);
-        }
-    }
-
     // ==================== 功能5: 发光浆果 -> 发光效果 ====================
     @EventHandler
     public void onGlowBerriesEat(PlayerItemConsumeEvent event) {
@@ -489,7 +337,7 @@ public class AssistPlugin extends JavaPlugin implements Listener {
         }
     }
 
-    // ==================== 功能7: 箱子上有方块也能打开（修复：不检查 isCancelled） ====================
+    // ==================== 功能7: 箱子上有方块也能打开 ====================
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onBlockAboveChest(PlayerInteractEvent event) {
         if (!enableBlockChest) return;
@@ -575,13 +423,6 @@ public class AssistPlugin extends JavaPlugin implements Listener {
                 getServer().dispatchCommand(player, command);
             }
         });
-    }
-
-    // ==================== 玩家离线清理（防内存泄漏） ====================
-    @EventHandler
-    public void onPlayerQuit(PlayerQuitEvent event) {
-        UUID uuid = event.getPlayer().getUniqueId();
-        playerInput.remove(uuid);
     }
 
     // ==================== 工具方法 ====================
