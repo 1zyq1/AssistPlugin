@@ -342,6 +342,7 @@ public class AssistPlugin extends JavaPlugin implements Listener {
     public void onBlockAboveChest(PlayerInteractEvent event) {
         if (!enableBlockChest) return;
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
+        if (event.isCancelled()) return;
         Block block = event.getClickedBlock();
         if (block == null || !isChest(block.getType())) return;
 
