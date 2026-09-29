@@ -342,6 +342,10 @@ public class AssistPlugin extends JavaPlugin implements Listener {
     public void onBlockAboveChest(PlayerInteractEvent event) {
         if (!enableBlockChest) return;
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
+
+        // 潜行右键箱子时交给原版处理，允许在箱子上放置方块
+        if (event.getPlayer().isSneaking()) return;
+
         if (event.isCancelled()) return;
         Block block = event.getClickedBlock();
         if (block == null || !isChest(block.getType())) return;
